@@ -1,9 +1,10 @@
-name: Build APK
+name: Android APK CI
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:  # اجرای دستی هم داشته باشی
 
 jobs:
   build:
@@ -16,26 +17,59 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: "3.10"
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache Android SDK
+        uses: actions/cache@v3
+        with:
+          path: ~/android-sdk
+          key: ${{ runner.os }}-androidsdk
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y python3-pip
+          sudo apt-get update
+          sudo apt-get install -y python3-pip build-essential git zip \
+            openjdk-17-jdk unzip wget tar
           pip install --upgrade pip
-          pip install cython buildozer
+          pip install buildozer==1.5.0 cython
+
+      - name: Install Android SDK
+        run: |
+          mkdir -p $HOME/android-sdk
+          cd $HOME/android-sdk
+          if [ ! -d "$HOME/android-sdk/cmdline-tools" ]; then
+            wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdtools.zip
+            unzip cmdtools.zip -d cmdline-tools
+            mkdir -p $HOME/android-sdk/cmdline-tools/latest
+            mv cmdline-tools/* $HOME/android-sdk/cmdline-tools/latest/ || true
+          fi
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-30" "build-tools;30.0.3" "platform-tools"
 
       - name: Build APK
         run: |
-          pip install -r requirements.txt
-          buildozer init
-          buildozer -v android debug
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+          buildozer android debug
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload APK (Artifacts)
+        uses: actions/upload-artifact@v3
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: Release v1.0.${{ github.run_number }}
+          name: app-apk
+          path: bin/*.apk
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        if: github.ref == 'refs/heads/main'
+        with:
           files: bin/*.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
